@@ -2,17 +2,17 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import json
-import requests
+import replicate
 from .. import extract_token_from_data
 
 
 # List Models Tool
 class ListModelsInput(BaseModel):
-    cursor: Optional[str] = Field(None, description="Pagination cursor for listing models")
+    cursor: Optional[str] = Field(None, description="Cursor for pagination")
     limit: Optional[int] = Field(20, description="Number of models to return (max 100)")
 
 
-def list_replicate_models(name, description, token):
+def list_models_replicate(name, description, token):
     """Lists available models on Replicate."""
     tool_description = description or "List available models on Replicate platform"
 
@@ -21,45 +21,34 @@ def list_replicate_models(name, description, token):
             # Extract the API token
             api_token = extract_token_from_data(token)
             
-            # Prepare headers
-            headers = {
-                "Authorization": f"Token {api_token}",
-                "Content-Type": "application/json"
-            }
+            # Set up Replicate client
+            client = replicate.Client(api_token=api_token)
             
-            # Prepare query parameters
-            params = {"limit": min(limit, 100)}
-            if cursor:
-                params["cursor"] = cursor
+            # List models
+            models = client.models.list()
             
-            # Make API request
-            response = requests.get(
-                "https://api.replicate.com/v1/models",
-                headers=headers,
-                params=params
-            )
+            # Format response
+            models_list = []
+            count = 0
+            for model in models:
+                if count >= limit:
+                    break
+                models_list.append({
+                    "owner": model.owner,
+                    "name": model.name,
+                    "description": model.description,
+                    "visibility": model.visibility,
+                    "github_url": model.github_url,
+                    "paper_url": model.paper_url,
+                    "license_url": model.license_url,
+                    "cover_image_url": model.cover_image_url,
+                    "created_at": str(model.created_at) if model.created_at else None,
+                    "updated_at": str(model.updated_at) if model.updated_at else None
+                })
+                count += 1
             
-            if response.status_code == 200:
-                data = response.json()
-                models = data.get("results", [])
-                
-                result = f"Found {len(models)} models:\n\n"
-                for model in models:
-                    result += f"• {model.get('owner')}/{model.get('name')}\n"
-                    result += f"  Description: {model.get('description', 'No description')}\n"
-                    result += f"  Visibility: {model.get('visibility', 'unknown')}\n"
-                    result += f"  GitHub URL: {model.get('github_url', 'N/A')}\n"
-                    result += f"  Paper URL: {model.get('paper_url', 'N/A')}\n"
-                    result += f"  License URL: {model.get('license_url', 'N/A')}\n"
-                    result += f"  Run count: {model.get('run_count', 0)}\n\n"
-                
-                if data.get("next"):
-                    result += f"Next cursor: {data.get('next')}\n"
-                
-                return result
-            else:
-                return f"Error listing models: {response.status_code} - {response.text}"
-                
+            return json.dumps(models_list, indent=2)
+            
         except Exception as e:
             return f"Failed to list models: {str(e)}"
 
@@ -74,64 +63,47 @@ def list_replicate_models(name, description, token):
 
 # Get Model Tool
 class GetModelInput(BaseModel):
-    model_owner: str = Field(description="Owner of the model (e.g., 'stability-ai')")
-    model_name: str = Field(description="Name of the model (e.g., 'stable-diffusion')")
+    owner: str = Field(description="Owner of the model")
+    name: str = Field(description="Name of the model")
 
 
-def get_replicate_model(name, description, token):
-    """Gets details of a specific Replicate model."""
-    tool_description = description or "Get detailed information about a specific Replicate model"
+def get_model_replicate(name, description, token):
+    """Gets details of a specific model on Replicate."""
+    tool_description = description or "Get details of a specific model on Replicate"
 
-    def get_model(model_owner: str, model_name: str) -> str:
+    def get_model(owner: str, name: str) -> str:
         try:
             # Extract the API token
             api_token = extract_token_from_data(token)
             
-            # Prepare headers
-            headers = {
-                "Authorization": f"Token {api_token}",
-                "Content-Type": "application/json"
+            # Set up Replicate client
+            client = replicate.Client(api_token=api_token)
+            
+            # Get model
+            model = client.models.get(f"{owner}/{name}")
+            
+            # Format response
+            model_info = {
+                "owner": model.owner,
+                "name": model.name,
+                "description": model.description,
+                "visibility": model.visibility,
+                "github_url": model.github_url,
+                "paper_url": model.paper_url,
+                "license_url": model.license_url,
+                "cover_image_url": model.cover_image_url,
+                "created_at": str(model.created_at) if model.created_at else None,
+                "updated_at": str(model.updated_at) if model.updated_at else None,
+                "latest_version": {
+                    "id": model.latest_version.id if model.latest_version else None,
+                    "created_at": str(model.latest_version.created_at) if model.latest_version and model.latest_version.created_at else None,
+                    "cog_version": model.latest_version.cog_version if model.latest_version else None,
+                    "openapi_schema": model.latest_version.openapi_schema if model.latest_version else None
+                } if model.latest_version else None
             }
             
-            # Make API request
-            response = requests.get(
-                f"https://api.replicate.com/v1/models/{model_owner}/{model_name}",
-                headers=headers
-            )
+            return json.dumps(model_info, indent=2)
             
-            if response.status_code == 200:
-                model = response.json()
-                
-                result = f"Model: {model.get('owner')}/{model.get('name')}\n"
-                result += f"Description: {model.get('description', 'No description')}\n"
-                result += f"Visibility: {model.get('visibility', 'unknown')}\n"
-                result += f"GitHub URL: {model.get('github_url', 'N/A')}\n"
-                result += f"Paper URL: {model.get('paper_url', 'N/A')}\n"
-                result += f"License URL: {model.get('license_url', 'N/A')}\n"
-                result += f"Run count: {model.get('run_count', 0)}\n"
-                result += f"Cover image URL: {model.get('cover_image_url', 'N/A')}\n"
-                result += f"Default example: {model.get('default_example', 'N/A')}\n"
-                
-                # Latest version info
-                latest_version = model.get('latest_version')
-                if latest_version:
-                    result += f"\nLatest Version:\n"
-                    result += f"  ID: {latest_version.get('id')}\n"
-                    result += f"  Created: {latest_version.get('created_at')}\n"
-                    result += f"  CogVersion: {latest_version.get('cog_version')}\n"
-                    
-                    # Schema info
-                    schema = latest_version.get('openapi_schema', {})
-                    if schema:
-                        components = schema.get('components', {})
-                        if components:
-                            result += f"  Input Schema: {json.dumps(components.get('schemas', {}).get('Input', {}), indent=2)}\n"
-                            result += f"  Output Schema: {json.dumps(components.get('schemas', {}).get('Output', {}), indent=2)}\n"
-                
-                return result
-            else:
-                return f"Error getting model: {response.status_code} - {response.text}"
-                
         except Exception as e:
             return f"Failed to get model: {str(e)}"
 
@@ -144,113 +116,113 @@ def get_replicate_model(name, description, token):
     )
 
 
-# Search Models Tool
-class SearchModelsInput(BaseModel):
-    query: str = Field(description="Search query for models")
-    limit: Optional[int] = Field(20, description="Number of models to return (max 100)")
+# Create Model Tool
+class CreateModelInput(BaseModel):
+    owner: str = Field(description="Owner of the model")
+    name: str = Field(description="Name of the model")
+    description: str = Field(description="Description of the model")
+    visibility: str = Field(description="Visibility of the model (public or private)")
+    hardware: str = Field(description="Hardware to run the model on")
+    github_url: Optional[str] = Field(None, description="GitHub URL of the model")
+    paper_url: Optional[str] = Field(None, description="Paper URL of the model")
+    license_url: Optional[str] = Field(None, description="License URL of the model")
+    cover_image_url: Optional[str] = Field(None, description="Cover image URL of the model")
 
 
-def search_replicate_models(name, description, token):
-    """Searches for models on Replicate."""
-    tool_description = description or "Search for models on Replicate platform"
+def create_model_replicate(name, description, token):
+    """Creates a new model on Replicate."""
+    tool_description = description or "Create a new model on Replicate"
 
-    def search_models(query: str, limit: Optional[int] = 20) -> str:
+    def create_model(owner: str, name: str, description: str, visibility: str, hardware: str,
+                    github_url: Optional[str] = None, paper_url: Optional[str] = None,
+                    license_url: Optional[str] = None, cover_image_url: Optional[str] = None) -> str:
         try:
             # Extract the API token
             api_token = extract_token_from_data(token)
             
-            # Prepare headers
-            headers = {
-                "Authorization": f"Token {api_token}",
-                "Content-Type": "application/json"
-            }
+            # Set up Replicate client
+            client = replicate.Client(api_token=api_token)
             
-            # Prepare query parameters
-            params = {
-                "query": query,
-                "limit": min(limit, 100)
-            }
-            
-            # Make API request
-            response = requests.get(
-                "https://api.replicate.com/v1/models",
-                headers=headers,
-                params=params
+            # Create model
+            model = client.models.create(
+                owner=owner,
+                name=name,
+                description=description,
+                visibility=visibility,
+                hardware=hardware,
+                github_url=github_url,
+                paper_url=paper_url,
+                license_url=license_url,
+                cover_image_url=cover_image_url
             )
             
-            if response.status_code == 200:
-                data = response.json()
-                models = data.get("results", [])
-                
-                result = f"Found {len(models)} models matching '{query}':\n\n"
-                for model in models:
-                    result += f"• {model.get('owner')}/{model.get('name')}\n"
-                    result += f"  Description: {model.get('description', 'No description')}\n"
-                    result += f"  Run count: {model.get('run_count', 0)}\n\n"
-                
-                return result
-            else:
-                return f"Error searching models: {response.status_code} - {response.text}"
-                
+            # Format response
+            model_info = {
+                "owner": model.owner,
+                "name": model.name,
+                "description": model.description,
+                "visibility": model.visibility,
+                "github_url": model.github_url,
+                "paper_url": model.paper_url,
+                "license_url": model.license_url,
+                "cover_image_url": model.cover_image_url,
+                "created_at": str(model.created_at) if model.created_at else None,
+                "updated_at": str(model.updated_at) if model.updated_at else None
+            }
+            
+            return f"Model created successfully: {json.dumps(model_info, indent=2)}"
+            
         except Exception as e:
-            return f"Failed to search models: {str(e)}"
+            return f"Failed to create model: {str(e)}"
 
     return StructuredTool.from_function(
-        func=search_models,
+        func=create_model,
         name=name,
         description=tool_description,
-        args_schema=SearchModelsInput,
+        args_schema=CreateModelInput,
         return_direct=True
     )
 
 
 # Get Model Versions Tool
 class GetModelVersionsInput(BaseModel):
-    model_owner: str = Field(description="Owner of the model")
-    model_name: str = Field(description="Name of the model")
+    owner: str = Field(description="Owner of the model")
+    name: str = Field(description="Name of the model")
 
 
-def get_model_versions(name, description, token):
-    """Gets versions of a specific model."""
-    tool_description = description or "Get all versions of a specific Replicate model"
+def get_model_versions_replicate(name, description, token):
+    """Gets all versions of a model on Replicate."""
+    tool_description = description or "Get all versions of a model on Replicate"
 
-    def get_versions(model_owner: str, model_name: str) -> str:
+    def get_model_versions(owner: str, name: str) -> str:
         try:
             # Extract the API token
             api_token = extract_token_from_data(token)
             
-            # Prepare headers
-            headers = {
-                "Authorization": f"Token {api_token}",
-                "Content-Type": "application/json"
-            }
+            # Set up Replicate client
+            client = replicate.Client(api_token=api_token)
             
-            # Make API request
-            response = requests.get(
-                f"https://api.replicate.com/v1/models/{model_owner}/{model_name}/versions",
-                headers=headers
-            )
+            # Get model versions
+            model = client.models.get(f"{owner}/{name}")
+            versions = list(model.versions.list())
             
-            if response.status_code == 200:
-                data = response.json()
-                versions = data.get("results", [])
-                
-                result = f"Found {len(versions)} versions for {model_owner}/{model_name}:\n\n"
-                for version in versions:
-                    result += f"• Version ID: {version.get('id')}\n"
-                    result += f"  Created: {version.get('created_at')}\n"
-                    result += f"  Cog Version: {version.get('cog_version')}\n"
-                    result += f"  Status: {version.get('status', 'unknown')}\n\n"
-                
-                return result
-            else:
-                return f"Error getting model versions: {response.status_code} - {response.text}"
-                
+            # Format response
+            versions_list = []
+            for version in versions:
+                versions_list.append({
+                    "id": version.id,
+                    "created_at": str(version.created_at) if version.created_at else None,
+                    "cog_version": version.cog_version,
+                    "openapi_schema": version.openapi_schema
+                })
+            
+            return json.dumps(versions_list, indent=2)
+            
         except Exception as e:
             return f"Failed to get model versions: {str(e)}"
 
     return StructuredTool.from_function(
-        func=get_versions,
+        func=get_model_versions,
         name=name,
         description=tool_description,
         args_schema=GetModelVersionsInput,
@@ -258,65 +230,45 @@ def get_model_versions(name, description, token):
     )
 
 
-# Get Model Version Details Tool
-class GetModelVersionDetailsInput(BaseModel):
-    model_owner: str = Field(description="Owner of the model")
-    model_name: str = Field(description="Name of the model")
-    version_id: str = Field(description="Version ID to get details for")
+# Get Model Version Tool
+class GetModelVersionInput(BaseModel):
+    owner: str = Field(description="Owner of the model")
+    name: str = Field(description="Name of the model")
+    version: str = Field(description="Version ID of the model")
 
 
-def get_model_version_details(name, description, token):
-    """Gets details of a specific model version."""
-    tool_description = description or "Get detailed information about a specific model version"
+def get_model_version_replicate(name, description, token):
+    """Gets details of a specific model version on Replicate."""
+    tool_description = description or "Get details of a specific model version on Replicate"
 
-    def get_version_details(model_owner: str, model_name: str, version_id: str) -> str:
+    def get_model_version(owner: str, name: str, version: str) -> str:
         try:
             # Extract the API token
             api_token = extract_token_from_data(token)
             
-            # Prepare headers
-            headers = {
-                "Authorization": f"Token {api_token}",
-                "Content-Type": "application/json"
+            # Set up Replicate client
+            client = replicate.Client(api_token=api_token)
+            
+            # Get model version
+            model_version = client.models.get(f"{owner}/{name}").versions.get(version)
+            
+            # Format response
+            version_info = {
+                "id": model_version.id,
+                "created_at": str(model_version.created_at) if model_version.created_at else None,
+                "cog_version": model_version.cog_version,
+                "openapi_schema": model_version.openapi_schema
             }
             
-            # Make API request
-            response = requests.get(
-                f"https://api.replicate.com/v1/models/{model_owner}/{model_name}/versions/{version_id}",
-                headers=headers
-            )
+            return json.dumps(version_info, indent=2)
             
-            if response.status_code == 200:
-                version = response.json()
-                
-                result = f"Version Details for {model_owner}/{model_name}:\n"
-                result += f"Version ID: {version.get('id')}\n"
-                result += f"Created: {version.get('created_at')}\n"
-                result += f"Cog Version: {version.get('cog_version')}\n"
-                result += f"Status: {version.get('status', 'unknown')}\n"
-                
-                # Schema info
-                schema = version.get('openapi_schema', {})
-                if schema:
-                    components = schema.get('components', {})
-                    if components:
-                        schemas = components.get('schemas', {})
-                        if 'Input' in schemas:
-                            result += f"\nInput Schema:\n{json.dumps(schemas['Input'], indent=2)}\n"
-                        if 'Output' in schemas:
-                            result += f"\nOutput Schema:\n{json.dumps(schemas['Output'], indent=2)}\n"
-                
-                return result
-            else:
-                return f"Error getting version details: {response.status_code} - {response.text}"
-                
         except Exception as e:
-            return f"Failed to get version details: {str(e)}"
+            return f"Failed to get model version: {str(e)}"
 
     return StructuredTool.from_function(
-        func=get_version_details,
+        func=get_model_version,
         name=name,
         description=tool_description,
-        args_schema=GetModelVersionDetailsInput,
+        args_schema=GetModelVersionInput,
         return_direct=True
     )
