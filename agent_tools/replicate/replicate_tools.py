@@ -4,7 +4,7 @@ from agent_tools.replicate.models import (
 )
 from agent_tools.replicate.predictions import (
     create_prediction_replicate, get_prediction_replicate, list_predictions_replicate,
-    cancel_prediction_replicate
+    cancel_prediction_replicate, run_prediction_replicate
 )
 from agent_tools.replicate.code_generation import (
     generate_code_replicate, optimize_code_replicate, debug_code_replicate,
@@ -31,6 +31,7 @@ def create_replicate_tools(name, token, description=None):
             - Get prediction
             - List predictions
             - Cancel prediction
+            - Run prediction (simplified)
             - Generate code
             - Optimize code
             - Debug code
@@ -85,6 +86,11 @@ def create_replicate_tools(name, token, description=None):
     cancel_prediction_desc = description if description else "Cancel a prediction on Replicate"
     cancel_prediction_tool = cancel_prediction_replicate(cancel_prediction_name, cancel_prediction_desc, token)
     tools.append(cancel_prediction_tool)
+
+    run_prediction_name = f"{name}_run_prediction"
+    run_prediction_desc = description if description else "Run a prediction on Replicate using simplified interface"
+    run_prediction_tool = run_prediction_replicate(run_prediction_name, run_prediction_desc, token)
+    tools.append(run_prediction_tool)
 
     # Code generation tools
     generate_code_name = f"{name}_generate_code"
