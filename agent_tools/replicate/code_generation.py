@@ -1,110 +1,65 @@
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any
 import json
-import requests
-import time
+import replicate
 from .. import extract_token_from_data
 
 
 # Generate Code Tool
 class GenerateCodeInput(BaseModel):
-    prompt: str = Field(description="Code generation prompt describing what code to generate")
-    language: Optional[str] = Field("python", description="Programming language (python, javascript, java, etc.)")
-    model: Optional[str] = Field("meta/codellama-34b-instruct", description="Code generation model to use")
-    max_tokens: Optional[int] = Field(1000, description="Maximum number of tokens to generate")
-    temperature: Optional[float] = Field(0.1, description="Temperature for code generation (0.0 to 1.0)")
+    prompt: str = Field(description="Description of the code to generate")
+    language: Optional[str] = Field("python", description="Programming language for the code")
+    model: Optional[str] = Field("meta/codellama-34b-instruct", description="Model to use for code generation")
+    max_tokens: Optional[int] = Field(2000, description="Maximum number of tokens to generate")
+    temperature: Optional[float] = Field(0.1, description="Temperature for generation (0.0 to 1.0)")
 
 
-def generate_code_with_replicate(name, description, token):
-    """Generates code using Replicate models."""
-    tool_description = description or "Generate code using Replicate's code generation models"
+def generate_code_replicate(name, description, token):
+    """Generates code using Replicate AI models."""
+    tool_description = description or "Generate code using Replicate AI models"
 
-    def generate_code(
-        prompt: str, 
-        language: Optional[str] = "python",
-        model: Optional[str] = "meta/codellama-34b-instruct",
-        max_tokens: Optional[int] = 1000,
-        temperature: Optional[float] = 0.1
-    ) -> str:
+    def generate_code(prompt: str, language: Optional[str] = "python", 
+                     model: Optional[str] = "meta/codellama-34b-instruct",
+                     max_tokens: Optional[int] = 2000, 
+                     temperature: Optional[float] = 0.1) -> str:
         try:
             # Extract the API token
             api_token = extract_token_from_data(token)
             
-            # Prepare headers
-            headers = {
-                "Authorization": f"Token {api_token}",
-                "Content-Type": "application/json"
-            }
+            # Set up Replicate client
+            client = replicate.Client(api_token=api_token)
             
-            # Format prompt for code generation
-            formatted_prompt = f"Generate {language} code for the following request:\n\n{prompt}\n\nCode:"
+            # Prepare the prompt for code generation
+            code_prompt = f"Generate {language} code for the following task:\n\n{prompt}\n\nCode:"
             
-            # Prepare request body
-            body = {
-                "version": model,
-                "input": {
-                    "prompt": formatted_prompt,
+            # Generate code using the specified model
+            output = client.run(
+                model,
+                input={
+                    "prompt": code_prompt,
                     "max_tokens": max_tokens,
                     "temperature": temperature,
                     "top_p": 0.9,
-                    "top_k": 50
+                    "stop_sequences": ["</code>", "```"]
                 }
-            }
-            
-            # Make API request
-            response = requests.post(
-                "https://api.replicate.com/v1/predictions",
-                headers=headers,
-                json=body
             )
             
-            if response.status_code == 201:
-                prediction = response.json()
-                prediction_id = prediction.get('id')
-                
-                # Wait for completion
-                max_wait = 60  # 60 seconds timeout
-                wait_time = 0
-                
-                while wait_time < max_wait:
-                    # Check prediction status
-                    status_response = requests.get(
-                        f"https://api.replicate.com/v1/predictions/{prediction_id}",
-                        headers=headers
-                    )
-                    
-                    if status_response.status_code == 200:
-                        status_data = status_response.json()
-                        status = status_data.get('status')
-                        
-                        if status == 'succeeded':
-                            output = status_data.get('output', [])
-                            if isinstance(output, list):
-                                generated_code = ''.join(output)
-                            else:
-                                generated_code = str(output)
-                            
-                            result = f"Generated {language} code:\n\n```{language}\n{generated_code}\n```\n"
-                            result += f"\nPrediction ID: {prediction_id}\n"
-                            result += f"Model used: {model}\n"
-                            
-                            return result
-                        elif status == 'failed':
-                            error = status_data.get('error', 'Unknown error')
-                            return f"Code generation failed: {error}"
-                        elif status in ['starting', 'processing']:
-                            time.sleep(2)
-                            wait_time += 2
-                        else:
-                            return f"Unexpected status: {status}"
-                    else:
-                        return f"Error checking prediction status: {status_response.status_code}"
-                
-                return f"Code generation timed out after {max_wait} seconds. Prediction ID: {prediction_id}"
+            # Format the response
+            if isinstance(output, list):
+                generated_code = "".join(output)
             else:
-                return f"Error creating prediction: {response.status_code} - {response.text}"
-                
+                generated_code = str(output)
+            
+            result = {
+                "language": language,
+                "prompt": prompt,
+                "generated_code": generated_code.strip(),
+                "model_used": model
+            }
+            
+            return json.dumps(result, indent=2)
+            
         except Exception as e:
             return f"Failed to generate code: {str(e)}"
 
@@ -117,470 +72,296 @@ def generate_code_with_replicate(name, description, token):
     )
 
 
-# Generate Python Code Tool
-class GeneratePythonCodeInput(BaseModel):
-    prompt: str = Field(description="Description of the Python code to generate")
-    include_comments: Optional[bool] = Field(True, description="Whether to include comments in the code")
-    include_docstrings: Optional[bool] = Field(True, description="Whether to include docstrings")
-    style: Optional[str] = Field("pep8", description="Code style (pep8, google, numpy)")
-
-
-def generate_python_code(name, description, token):
-    """Generates Python code using Replicate models."""
-    tool_description = description or "Generate Python code with specific formatting and style"
-
-    def generate_python(
-        prompt: str, 
-        include_comments: Optional[bool] = True,
-        include_docstrings: Optional[bool] = True,
-        style: Optional[str] = "pep8"
-    ) -> str:
-        try:
-            # Extract the API token
-            api_token = extract_token_from_data(token)
-            
-            # Prepare headers
-            headers = {
-                "Authorization": f"Token {api_token}",
-                "Content-Type": "application/json"
-            }
-            
-            # Format prompt for Python code generation
-            style_instructions = ""
-            if include_comments:
-                style_instructions += "Include helpful comments. "
-            if include_docstrings:
-                style_instructions += "Include docstrings for functions and classes. "
-            style_instructions += f"Follow {style} style guidelines. "
-            
-            formatted_prompt = f"""Generate Python code for the following request:
-
-{prompt}
-
-Requirements:
-- {style_instructions}
-- Write clean, readable, and well-structured code
-- Include error handling where appropriate
-- Use meaningful variable names
-
-Python code:"""
-            
-            # Prepare request body
-            body = {
-                "version": "meta/codellama-34b-instruct",
-                "input": {
-                    "prompt": formatted_prompt,
-                    "max_tokens": 1500,
-                    "temperature": 0.1,
-                    "top_p": 0.9,
-                    "top_k": 50
-                }
-            }
-            
-            # Make API request
-            response = requests.post(
-                "https://api.replicate.com/v1/predictions",
-                headers=headers,
-                json=body
-            )
-            
-            if response.status_code == 201:
-                prediction = response.json()
-                prediction_id = prediction.get('id')
-                
-                # Wait for completion
-                max_wait = 60
-                wait_time = 0
-                
-                while wait_time < max_wait:
-                    status_response = requests.get(
-                        f"https://api.replicate.com/v1/predictions/{prediction_id}",
-                        headers=headers
-                    )
-                    
-                    if status_response.status_code == 200:
-                        status_data = status_response.json()
-                        status = status_data.get('status')
-                        
-                        if status == 'succeeded':
-                            output = status_data.get('output', [])
-                            if isinstance(output, list):
-                                generated_code = ''.join(output)
-                            else:
-                                generated_code = str(output)
-                            
-                            result = f"Generated Python code:\n\n```python\n{generated_code}\n```\n"
-                            result += f"\nStyle: {style}\n"
-                            result += f"Comments included: {include_comments}\n"
-                            result += f"Docstrings included: {include_docstrings}\n"
-                            
-                            return result
-                        elif status == 'failed':
-                            error = status_data.get('error', 'Unknown error')
-                            return f"Python code generation failed: {error}"
-                        elif status in ['starting', 'processing']:
-                            time.sleep(2)
-                            wait_time += 2
-                
-                return f"Python code generation timed out after {max_wait} seconds."
-            else:
-                return f"Error creating prediction: {response.status_code} - {response.text}"
-                
-        except Exception as e:
-            return f"Failed to generate Python code: {str(e)}"
-
-    return StructuredTool.from_function(
-        func=generate_python,
-        name=name,
-        description=tool_description,
-        args_schema=GeneratePythonCodeInput,
-        return_direct=True
-    )
-
-
-# Generate JavaScript Code Tool
-class GenerateJavaScriptCodeInput(BaseModel):
-    prompt: str = Field(description="Description of the JavaScript code to generate")
-    framework: Optional[str] = Field("vanilla", description="JavaScript framework (vanilla, react, vue, node)")
-    es_version: Optional[str] = Field("es6", description="ECMAScript version (es5, es6, es2020)")
-    include_types: Optional[bool] = Field(False, description="Whether to include TypeScript types")
-
-
-def generate_javascript_code(name, description, token):
-    """Generates JavaScript code using Replicate models."""
-    tool_description = description or "Generate JavaScript code with specific framework and version"
-
-    def generate_javascript(
-        prompt: str, 
-        framework: Optional[str] = "vanilla",
-        es_version: Optional[str] = "es6",
-        include_types: Optional[bool] = False
-    ) -> str:
-        try:
-            # Extract the API token
-            api_token = extract_token_from_data(token)
-            
-            # Prepare headers
-            headers = {
-                "Authorization": f"Token {api_token}",
-                "Content-Type": "application/json"
-            }
-            
-            # Format prompt for JavaScript code generation
-            type_instruction = "Include TypeScript types" if include_types else "Use plain JavaScript"
-            
-            formatted_prompt = f"""Generate JavaScript code for the following request:
-
-{prompt}
-
-Requirements:
-- Use {framework} JavaScript framework
-- Target {es_version} ECMAScript version
-- {type_instruction}
-- Write clean, modern JavaScript code
-- Include comments for complex logic
-- Follow best practices
-
-JavaScript code:"""
-            
-            # Prepare request body
-            body = {
-                "version": "meta/codellama-34b-instruct",
-                "input": {
-                    "prompt": formatted_prompt,
-                    "max_tokens": 1500,
-                    "temperature": 0.1,
-                    "top_p": 0.9,
-                    "top_k": 50
-                }
-            }
-            
-            # Make API request
-            response = requests.post(
-                "https://api.replicate.com/v1/predictions",
-                headers=headers,
-                json=body
-            )
-            
-            if response.status_code == 201:
-                prediction = response.json()
-                prediction_id = prediction.get('id')
-                
-                # Wait for completion
-                max_wait = 60
-                wait_time = 0
-                
-                while wait_time < max_wait:
-                    status_response = requests.get(
-                        f"https://api.replicate.com/v1/predictions/{prediction_id}",
-                        headers=headers
-                    )
-                    
-                    if status_response.status_code == 200:
-                        status_data = status_response.json()
-                        status = status_data.get('status')
-                        
-                        if status == 'succeeded':
-                            output = status_data.get('output', [])
-                            if isinstance(output, list):
-                                generated_code = ''.join(output)
-                            else:
-                                generated_code = str(output)
-                            
-                            file_extension = "ts" if include_types else "js"
-                            result = f"Generated JavaScript code:\n\n```{file_extension}\n{generated_code}\n```\n"
-                            result += f"\nFramework: {framework}\n"
-                            result += f"ES Version: {es_version}\n"
-                            result += f"TypeScript types: {include_types}\n"
-                            
-                            return result
-                        elif status == 'failed':
-                            error = status_data.get('error', 'Unknown error')
-                            return f"JavaScript code generation failed: {error}"
-                        elif status in ['starting', 'processing']:
-                            time.sleep(2)
-                            wait_time += 2
-                
-                return f"JavaScript code generation timed out after {max_wait} seconds."
-            else:
-                return f"Error creating prediction: {response.status_code} - {response.text}"
-                
-        except Exception as e:
-            return f"Failed to generate JavaScript code: {str(e)}"
-
-    return StructuredTool.from_function(
-        func=generate_javascript,
-        name=name,
-        description=tool_description,
-        args_schema=GenerateJavaScriptCodeInput,
-        return_direct=True
-    )
-
-
-# Generate API Code Tool
-class GenerateAPICodeInput(BaseModel):
-    api_description: str = Field(description="Description of the API to generate code for")
-    api_type: Optional[str] = Field("rest", description="API type (rest, graphql, websocket)")
-    language: Optional[str] = Field("python", description="Programming language for the API client")
-    authentication: Optional[str] = Field("none", description="Authentication method (none, api_key, oauth, jwt)")
-
-
-def generate_api_code(name, description, token):
-    """Generates API integration code using Replicate models."""
-    tool_description = description or "Generate API integration code for various services"
-
-    def generate_api(
-        api_description: str, 
-        api_type: Optional[str] = "rest",
-        language: Optional[str] = "python",
-        authentication: Optional[str] = "none"
-    ) -> str:
-        try:
-            # Extract the API token
-            api_token = extract_token_from_data(token)
-            
-            # Prepare headers
-            headers = {
-                "Authorization": f"Token {api_token}",
-                "Content-Type": "application/json"
-            }
-            
-            # Format prompt for API code generation
-            auth_instruction = ""
-            if authentication != "none":
-                auth_instruction = f"Include {authentication} authentication handling. "
-            
-            formatted_prompt = f"""Generate {language} code for {api_type.upper()} API integration:
-
-API Description: {api_description}
-
-Requirements:
-- Create a {language} client for the {api_type.upper()} API
-- {auth_instruction}
-- Include error handling and response parsing
-- Add proper documentation and comments
-- Follow {language} best practices
-- Include example usage
-
-{language} API client code:"""
-            
-            # Prepare request body
-            body = {
-                "version": "meta/codellama-34b-instruct",
-                "input": {
-                    "prompt": formatted_prompt,
-                    "max_tokens": 2000,
-                    "temperature": 0.1,
-                    "top_p": 0.9,
-                    "top_k": 50
-                }
-            }
-            
-            # Make API request
-            response = requests.post(
-                "https://api.replicate.com/v1/predictions",
-                headers=headers,
-                json=body
-            )
-            
-            if response.status_code == 201:
-                prediction = response.json()
-                prediction_id = prediction.get('id')
-                
-                # Wait for completion
-                max_wait = 90
-                wait_time = 0
-                
-                while wait_time < max_wait:
-                    status_response = requests.get(
-                        f"https://api.replicate.com/v1/predictions/{prediction_id}",
-                        headers=headers
-                    )
-                    
-                    if status_response.status_code == 200:
-                        status_data = status_response.json()
-                        status = status_data.get('status')
-                        
-                        if status == 'succeeded':
-                            output = status_data.get('output', [])
-                            if isinstance(output, list):
-                                generated_code = ''.join(output)
-                            else:
-                                generated_code = str(output)
-                            
-                            result = f"Generated {language} API client code:\n\n```{language}\n{generated_code}\n```\n"
-                            result += f"\nAPI Type: {api_type.upper()}\n"
-                            result += f"Language: {language}\n"
-                            result += f"Authentication: {authentication}\n"
-                            
-                            return result
-                        elif status == 'failed':
-                            error = status_data.get('error', 'Unknown error')
-                            return f"API code generation failed: {error}"
-                        elif status in ['starting', 'processing']:
-                            time.sleep(3)
-                            wait_time += 3
-                
-                return f"API code generation timed out after {max_wait} seconds."
-            else:
-                return f"Error creating prediction: {response.status_code} - {response.text}"
-                
-        except Exception as e:
-            return f"Failed to generate API code: {str(e)}"
-
-    return StructuredTool.from_function(
-        func=generate_api,
-        name=name,
-        description=tool_description,
-        args_schema=GenerateAPICodeInput,
-        return_direct=True
-    )
-
-
-# Code Completion Tool
-class CodeCompletionInput(BaseModel):
-    code_snippet: str = Field(description="Partial code snippet to complete")
+# Optimize Code Tool
+class OptimizeCodeInput(BaseModel):
+    code: str = Field(description="Code to optimize")
     language: Optional[str] = Field("python", description="Programming language of the code")
-    context: Optional[str] = Field("", description="Additional context about the code purpose")
+    optimization_goals: Optional[str] = Field("performance and readability", description="Optimization goals")
+    model: Optional[str] = Field("meta/codellama-34b-instruct", description="Model to use for code optimization")
+    max_tokens: Optional[int] = Field(2000, description="Maximum number of tokens to generate")
 
 
-def code_completion_replicate(name, description, token):
-    """Completes code snippets using Replicate models."""
-    tool_description = description or "Complete partial code snippets using Replicate"
+def optimize_code_replicate(name, description, token):
+    """Optimizes existing code using Replicate AI models."""
+    tool_description = description or "Optimize existing code using Replicate AI models"
 
-    def complete_code(
-        code_snippet: str, 
-        language: Optional[str] = "python",
-        context: Optional[str] = ""
-    ) -> str:
+    def optimize_code(code: str, language: Optional[str] = "python",
+                     optimization_goals: Optional[str] = "performance and readability",
+                     model: Optional[str] = "meta/codellama-34b-instruct",
+                     max_tokens: Optional[int] = 2000) -> str:
         try:
             # Extract the API token
             api_token = extract_token_from_data(token)
             
-            # Prepare headers
-            headers = {
-                "Authorization": f"Token {api_token}",
-                "Content-Type": "application/json"
-            }
+            # Set up Replicate client
+            client = replicate.Client(api_token=api_token)
             
-            # Format prompt for code completion
-            context_text = f"Context: {context}\n\n" if context else ""
-            
-            formatted_prompt = f"""Complete the following {language} code snippet:
+            # Prepare the prompt for code optimization
+            optimize_prompt = f"""Optimize the following {language} code for {optimization_goals}:
 
-{context_text}```{language}
-{code_snippet}
+Original code:
+```{language}
+{code}
 ```
 
-Continue the code from where it left off:"""
+Please provide the optimized code with explanations of the improvements made:"""
             
-            # Prepare request body
-            body = {
-                "version": "meta/codellama-34b-instruct",
-                "input": {
-                    "prompt": formatted_prompt,
-                    "max_tokens": 800,
-                    "temperature": 0.2,
-                    "top_p": 0.9,
-                    "top_k": 50
+            # Optimize code using the specified model
+            output = client.run(
+                model,
+                input={
+                    "prompt": optimize_prompt,
+                    "max_tokens": max_tokens,
+                    "temperature": 0.1,
+                    "top_p": 0.9
                 }
-            }
-            
-            # Make API request
-            response = requests.post(
-                "https://api.replicate.com/v1/predictions",
-                headers=headers,
-                json=body
             )
             
-            if response.status_code == 201:
-                prediction = response.json()
-                prediction_id = prediction.get('id')
-                
-                # Wait for completion
-                max_wait = 45
-                wait_time = 0
-                
-                while wait_time < max_wait:
-                    status_response = requests.get(
-                        f"https://api.replicate.com/v1/predictions/{prediction_id}",
-                        headers=headers
-                    )
-                    
-                    if status_response.status_code == 200:
-                        status_data = status_response.json()
-                        status = status_data.get('status')
-                        
-                        if status == 'succeeded':
-                            output = status_data.get('output', [])
-                            if isinstance(output, list):
-                                completion = ''.join(output)
-                            else:
-                                completion = str(output)
-                            
-                            result = f"Code completion:\n\n```{language}\n{code_snippet}{completion}\n```\n"
-                            result += f"\nOriginal snippet:\n```{language}\n{code_snippet}\n```\n"
-                            result += f"\nCompletion:\n```{language}\n{completion}\n```\n"
-                            
-                            return result
-                        elif status == 'failed':
-                            error = status_data.get('error', 'Unknown error')
-                            return f"Code completion failed: {error}"
-                        elif status in ['starting', 'processing']:
-                            time.sleep(2)
-                            wait_time += 2
-                
-                return f"Code completion timed out after {max_wait} seconds."
+            # Format the response
+            if isinstance(output, list):
+                optimized_result = "".join(output)
             else:
-                return f"Error creating prediction: {response.status_code} - {response.text}"
-                
+                optimized_result = str(output)
+            
+            result = {
+                "language": language,
+                "original_code": code,
+                "optimization_goals": optimization_goals,
+                "optimized_result": optimized_result.strip(),
+                "model_used": model
+            }
+            
+            return json.dumps(result, indent=2)
+            
         except Exception as e:
-            return f"Failed to complete code: {str(e)}"
+            return f"Failed to optimize code: {str(e)}"
 
     return StructuredTool.from_function(
-        func=complete_code,
+        func=optimize_code,
         name=name,
         description=tool_description,
-        args_schema=CodeCompletionInput,
+        args_schema=OptimizeCodeInput,
+        return_direct=True
+    )
+
+
+# Debug Code Tool
+class DebugCodeInput(BaseModel):
+    code: str = Field(description="Code to debug")
+    error_message: Optional[str] = Field(None, description="Error message if available")
+    language: Optional[str] = Field("python", description="Programming language of the code")
+    model: Optional[str] = Field("meta/codellama-34b-instruct", description="Model to use for debugging")
+    max_tokens: Optional[int] = Field(2000, description="Maximum number of tokens to generate")
+
+
+def debug_code_replicate(name, description, token):
+    """Debugs and fixes code using Replicate AI models."""
+    tool_description = description or "Debug and fix code using Replicate AI models"
+
+    def debug_code(code: str, error_message: Optional[str] = None,
+                  language: Optional[str] = "python",
+                  model: Optional[str] = "meta/codellama-34b-instruct",
+                  max_tokens: Optional[int] = 2000) -> str:
+        try:
+            # Extract the API token
+            api_token = extract_token_from_data(token)
+            
+            # Set up Replicate client
+            client = replicate.Client(api_token=api_token)
+            
+            # Prepare the prompt for debugging
+            debug_prompt = f"""Debug and fix the following {language} code:
+
+Code:
+```{language}
+{code}
+```
+"""
+            
+            if error_message:
+                debug_prompt += f"\nError message: {error_message}\n"
+            
+            debug_prompt += "\nPlease identify the issues and provide the corrected code with explanations:"
+            
+            # Debug code using the specified model
+            output = client.run(
+                model,
+                input={
+                    "prompt": debug_prompt,
+                    "max_tokens": max_tokens,
+                    "temperature": 0.1,
+                    "top_p": 0.9
+                }
+            )
+            
+            # Format the response
+            if isinstance(output, list):
+                debug_result = "".join(output)
+            else:
+                debug_result = str(output)
+            
+            result = {
+                "language": language,
+                "original_code": code,
+                "error_message": error_message,
+                "debug_result": debug_result.strip(),
+                "model_used": model
+            }
+            
+            return json.dumps(result, indent=2)
+            
+        except Exception as e:
+            return f"Failed to debug code: {str(e)}"
+
+    return StructuredTool.from_function(
+        func=debug_code,
+        name=name,
+        description=tool_description,
+        args_schema=DebugCodeInput,
+        return_direct=True
+    )
+
+
+# Generate Dockerfile Tool
+class GenerateDockerfileInput(BaseModel):
+    project_description: str = Field(description="Description of the project")
+    language: Optional[str] = Field("python", description="Main programming language")
+    dependencies: Optional[List[str]] = Field(None, description="List of dependencies")
+    port: Optional[int] = Field(8000, description="Port to expose")
+    model: Optional[str] = Field("meta/codellama-34b-instruct", description="Model to use for Dockerfile generation")
+
+
+def generate_dockerfile_replicate(name, description, token):
+    """Generates Dockerfile using Replicate AI models."""
+    tool_description = description or "Generate Dockerfile using Replicate AI models"
+
+    def generate_dockerfile(project_description: str, language: Optional[str] = "python",
+                           dependencies: Optional[List[str]] = None,
+                           port: Optional[int] = 8000,
+                           model: Optional[str] = "meta/codellama-34b-instruct") -> str:
+        try:
+            # Extract the API token
+            api_token = extract_token_from_data(token)
+            
+            # Set up Replicate client
+            client = replicate.Client(api_token=api_token)
+            
+            # Prepare the prompt for Dockerfile generation
+            dockerfile_prompt = f"""Generate a Dockerfile for a {language} project with the following specifications:
+
+Project description: {project_description}
+Language: {language}
+Port to expose: {port}
+"""
+            
+            if dependencies:
+                dockerfile_prompt += f"Dependencies: {', '.join(dependencies)}\n"
+            
+            dockerfile_prompt += "\nPlease provide a complete, production-ready Dockerfile:"
+            
+            # Generate Dockerfile using the specified model
+            output = client.run(
+                model,
+                input={
+                    "prompt": dockerfile_prompt,
+                    "max_tokens": 1000,
+                    "temperature": 0.1,
+                    "top_p": 0.9
+                }
+            )
+            
+            # Format the response
+            if isinstance(output, list):
+                dockerfile_content = "".join(output)
+            else:
+                dockerfile_content = str(output)
+            
+            result = {
+                "project_description": project_description,
+                "language": language,
+                "dependencies": dependencies,
+                "port": port,
+                "dockerfile": dockerfile_content.strip(),
+                "model_used": model
+            }
+            
+            return json.dumps(result, indent=2)
+            
+        except Exception as e:
+            return f"Failed to generate Dockerfile: {str(e)}"
+
+    return StructuredTool.from_function(
+        func=generate_dockerfile,
+        name=name,
+        description=tool_description,
+        args_schema=GenerateDockerfileInput,
+        return_direct=True
+    )
+
+
+# Generate Requirements Tool
+class GenerateRequirementsInput(BaseModel):
+    code: str = Field(description="Code to analyze for dependencies")
+    language: Optional[str] = Field("python", description="Programming language")
+    model: Optional[str] = Field("meta/codellama-34b-instruct", description="Model to use for requirements generation")
+
+
+def generate_requirements_replicate(name, description, token):
+    """Generates requirements.txt using Replicate AI models."""
+    tool_description = description or "Generate requirements.txt using Replicate AI models"
+
+    def generate_requirements(code: str, language: Optional[str] = "python",
+                             model: Optional[str] = "meta/codellama-34b-instruct") -> str:
+        try:
+            # Extract the API token
+            api_token = extract_token_from_data(token)
+            
+            # Set up Replicate client
+            client = replicate.Client(api_token=api_token)
+            
+            # Prepare the prompt for requirements generation
+            requirements_prompt = f"""Analyze the following {language} code and generate a requirements.txt file with all necessary dependencies:
+
+Code:
+```{language}
+{code}
+```
+
+Please provide a complete requirements.txt file with specific version numbers where appropriate:"""
+            
+            # Generate requirements using the specified model
+            output = client.run(
+                model,
+                input={
+                    "prompt": requirements_prompt,
+                    "max_tokens": 1000,
+                    "temperature": 0.1,
+                    "top_p": 0.9
+                }
+            )
+            
+            # Format the response
+            if isinstance(output, list):
+                requirements_content = "".join(output)
+            else:
+                requirements_content = str(output)
+            
+            result = {
+                "language": language,
+                "analyzed_code": code,
+                "requirements": requirements_content.strip(),
+                "model_used": model
+            }
+            
+            return json.dumps(result, indent=2)
+            
+        except Exception as e:
+            return f"Failed to generate requirements: {str(e)}"
+
+    return StructuredTool.from_function(
+        func=generate_requirements,
+        name=name,
+        description=tool_description,
+        args_schema=GenerateRequirementsInput,
         return_direct=True
     )
