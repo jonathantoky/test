@@ -1,15 +1,23 @@
-from agent_tools.replicate.models import (
-    list_models_replicate, get_model_replicate, create_model_replicate,
-    get_model_versions_replicate, get_model_version_replicate
+"""
+Replicate Agent Tools - Main Tool Factory
+
+This module provides the main factory function to create all Replicate tools
+with proper authentication and configuration.
+"""
+
+from .models import (
+    list_replicate_models, get_replicate_model, create_replicate_model,
+    update_replicate_model, delete_replicate_model
 )
-from agent_tools.replicate.predictions import (
-    create_prediction_replicate, get_prediction_replicate, list_predictions_replicate,
-    cancel_prediction_replicate, run_prediction_replicate
+from .predictions import (
+    create_replicate_prediction, get_replicate_prediction, cancel_replicate_prediction,
+    list_replicate_predictions, stream_replicate_prediction
 )
-from agent_tools.replicate.code_generation import (
+from .code_generation import (
     generate_code_replicate, optimize_code_replicate, debug_code_replicate,
-    generate_dockerfile_replicate, generate_requirements_replicate
+    explain_code_replicate, convert_code_replicate
 )
+
 
 def create_replicate_tools(name, token, description=None):
     """
@@ -17,105 +25,87 @@ def create_replicate_tools(name, token, description=None):
 
     Args:
         name (str): Base name for the tools, will be prefixed to each tool name
-        token (str): API token for Replicate
+        token (str): Replicate API token for authentication
         description (str, optional): Description for the tools
 
     Returns:
         list: List of Replicate tools including:
-            - List models
-            - Get model details
-            - Create model
-            - Get model versions
-            - Get model version details
-            - Create prediction
-            - Get prediction
-            - List predictions
-            - Cancel prediction
-            - Run prediction (simplified)
-            - Generate code
-            - Optimize code
-            - Debug code
-            - Generate Dockerfile
-            - Generate requirements
+            - Model management tools (5 tools)
+            - Prediction execution tools (5 tools)
+            - Code generation tools (5 tools)
     """
     tools = []
 
-    # Model management tools
-    list_models_name = f"{name}_list_models"
-    list_models_desc = description if description else "List available models on Replicate"
-    list_models_tool = list_models_replicate(list_models_name, list_models_desc, token)
-    tools.append(list_models_tool)
+    # Model Management Tools
+    model_tools = [
+        list_replicate_models(f"{name}_list_models", description, token),
+        get_replicate_model(f"{name}_get_model", description, token),
+        create_replicate_model(f"{name}_create_model", description, token),
+        update_replicate_model(f"{name}_update_model", description, token),
+        delete_replicate_model(f"{name}_delete_model", description, token)
+    ]
+    tools.extend(model_tools)
 
-    get_model_name = f"{name}_get_model"
-    get_model_desc = description if description else "Get details of a specific model on Replicate"
-    get_model_tool = get_model_replicate(get_model_name, get_model_desc, token)
-    tools.append(get_model_tool)
+    # Prediction Execution Tools
+    prediction_tools = [
+        create_replicate_prediction(f"{name}_create_prediction", description, token),
+        get_replicate_prediction(f"{name}_get_prediction", description, token),
+        cancel_replicate_prediction(f"{name}_cancel_prediction", description, token),
+        list_replicate_predictions(f"{name}_list_predictions", description, token),
+        stream_replicate_prediction(f"{name}_stream_prediction", description, token)
+    ]
+    tools.extend(prediction_tools)
 
-    create_model_name = f"{name}_create_model"
-    create_model_desc = description if description else "Create a new model on Replicate"
-    create_model_tool = create_model_replicate(create_model_name, create_model_desc, token)
-    tools.append(create_model_tool)
-
-    get_model_versions_name = f"{name}_get_model_versions"
-    get_model_versions_desc = description if description else "Get all versions of a model on Replicate"
-    get_model_versions_tool = get_model_versions_replicate(get_model_versions_name, get_model_versions_desc, token)
-    tools.append(get_model_versions_tool)
-
-    get_model_version_name = f"{name}_get_model_version"
-    get_model_version_desc = description if description else "Get details of a specific model version on Replicate"
-    get_model_version_tool = get_model_version_replicate(get_model_version_name, get_model_version_desc, token)
-    tools.append(get_model_version_tool)
-
-    # Prediction tools
-    create_prediction_name = f"{name}_create_prediction"
-    create_prediction_desc = description if description else "Create a new prediction on Replicate"
-    create_prediction_tool = create_prediction_replicate(create_prediction_name, create_prediction_desc, token)
-    tools.append(create_prediction_tool)
-
-    get_prediction_name = f"{name}_get_prediction"
-    get_prediction_desc = description if description else "Get details of a specific prediction on Replicate"
-    get_prediction_tool = get_prediction_replicate(get_prediction_name, get_prediction_desc, token)
-    tools.append(get_prediction_tool)
-
-    list_predictions_name = f"{name}_list_predictions"
-    list_predictions_desc = description if description else "List predictions on Replicate"
-    list_predictions_tool = list_predictions_replicate(list_predictions_name, list_predictions_desc, token)
-    tools.append(list_predictions_tool)
-
-    cancel_prediction_name = f"{name}_cancel_prediction"
-    cancel_prediction_desc = description if description else "Cancel a prediction on Replicate"
-    cancel_prediction_tool = cancel_prediction_replicate(cancel_prediction_name, cancel_prediction_desc, token)
-    tools.append(cancel_prediction_tool)
-
-    run_prediction_name = f"{name}_run_prediction"
-    run_prediction_desc = description if description else "Run a prediction on Replicate using simplified interface"
-    run_prediction_tool = run_prediction_replicate(run_prediction_name, run_prediction_desc, token)
-    tools.append(run_prediction_tool)
-
-    # Code generation tools
-    generate_code_name = f"{name}_generate_code"
-    generate_code_desc = description if description else "Generate code using Replicate AI models"
-    generate_code_tool = generate_code_replicate(generate_code_name, generate_code_desc, token)
-    tools.append(generate_code_tool)
-
-    optimize_code_name = f"{name}_optimize_code"
-    optimize_code_desc = description if description else "Optimize existing code using Replicate AI models"
-    optimize_code_tool = optimize_code_replicate(optimize_code_name, optimize_code_desc, token)
-    tools.append(optimize_code_tool)
-
-    debug_code_name = f"{name}_debug_code"
-    debug_code_desc = description if description else "Debug and fix code using Replicate AI models"
-    debug_code_tool = debug_code_replicate(debug_code_name, debug_code_desc, token)
-    tools.append(debug_code_tool)
-
-    generate_dockerfile_name = f"{name}_generate_dockerfile"
-    generate_dockerfile_desc = description if description else "Generate Dockerfile using Replicate AI models"
-    generate_dockerfile_tool = generate_dockerfile_replicate(generate_dockerfile_name, generate_dockerfile_desc, token)
-    tools.append(generate_dockerfile_tool)
-
-    generate_requirements_name = f"{name}_generate_requirements"
-    generate_requirements_desc = description if description else "Generate requirements.txt using Replicate AI models"
-    generate_requirements_tool = generate_requirements_replicate(generate_requirements_name, generate_requirements_desc, token)
-    tools.append(generate_requirements_tool)
+    # Code Generation Tools
+    code_tools = [
+        generate_code_replicate(f"{name}_generate_code", description, token),
+        optimize_code_replicate(f"{name}_optimize_code", description, token),
+        debug_code_replicate(f"{name}_debug_code", description, token),
+        explain_code_replicate(f"{name}_explain_code", description, token),
+        convert_code_replicate(f"{name}_convert_code", description, token)
+    ]
+    tools.extend(code_tools)
 
     return tools
+
+
+# Utility function to get tool categories
+def get_replicate_tool_categories():
+    """
+    Returns information about available tool categories.
+    
+    Returns:
+        dict: Dictionary containing tool categories and their descriptions
+    """
+    return {
+        "models": {
+            "description": "Tools for managing Replicate models",
+            "count": 5,
+            "tools": [
+                "list_models", "get_model", "create_model", 
+                "update_model", "delete_model"
+            ]
+        },
+        "predictions": {
+            "description": "Tools for executing and managing predictions",
+            "count": 5,
+            "tools": [
+                "create_prediction", "get_prediction", "cancel_prediction",
+                "list_predictions", "stream_prediction"
+            ]
+        },
+        "code_generation": {
+            "description": "Tools for AI-powered code generation and optimization",
+            "count": 5,
+            "tools": [
+                "generate_code", "optimize_code", "debug_code",
+                "explain_code", "convert_code"
+            ]
+        }
+    }
+
+
+# Version and metadata
+__version__ = "1.0.0"
+__author__ = "Jonathan Toky"
+__description__ = "Comprehensive Replicate API tools for AI model management and code generation"
