@@ -1,275 +1,335 @@
 """
 Replicate Authentication Client
 
-This module provides authentication utilities for the Replicate API,
-including token validation, client initialization, and error handling.
+This module provides authentication and client setup for Replicate API integration.
 """
 
 import os
 import requests
-import replicate
 from typing import Optional, Dict, Any
-from dataclasses import dataclass
+import json
 
 
-@dataclass
-class ReplicateConfig:
-    """Configuration class for Replicate client"""
-    api_token: str
-    base_url: str = "https://api.replicate.com/v1"
-    timeout: int = 30
-    max_retries: int = 3
-
-
-class ReplicateAuthError(Exception):
-    """Custom exception for Replicate authentication errors"""
-    pass
-
-
-class ReplicateClient:
+class ReplicateAuthClient:
     """
-    Replicate API client with authentication and error handling
+    Client for handling Replicate API authentication and basic operations.
     """
     
-    def __init__(self, config: ReplicateConfig):
-        self.config = config
-        self.client = None
-        self._initialize_client()
-    
-    def _initialize_client(self):
-        """Initialize the Replicate client with authentication"""
-        try:
-            self.client = replicate.Client(api_token=self.config.api_token)
-        except Exception as e:
-            raise ReplicateAuthError(f"Failed to initialize Replicate client: {str(e)}")
+    def __init__(self, api_token: Optional[str] = None):
+        """
+        Initialize the Replicate authentication client.
+        
+        Args:
+            api_token (str, optional): Replicate API token. If not provided,
+                                     will look for REPLICATE_API_TOKEN environment variable.
+        """
+        self.api_token = api_token or os.getenv('REPLICATE_API_TOKEN')
+        if not self.api_token:
+            raise ValueError("Replicate API token is required. Set REPLICATE_API_TOKEN environment variable or pass api_token parameter.")
+        
+        self.base_url = "https://api.replicate.com/v1"
+        self.headers = {
+            "Authorization": f"Token {self.api_token}",
+            "Content-Type": "application/json",
+            "User-Agent": "SwiftaskAgent/1.0"
+        }
     
     def validate_token(self) -> bool:
         """
-        Validate the Replicate API token
+        Validate the API token by making a test request.
         
         Returns:
-            bool: True if token is valid, False otherwise
+            bool: True if token is valid, False otherwise.
         """
         try:
-            # Try to list models to validate token
-            list(self.client.models.list())
-            return True
+            response = requests.get(
+                f"{self.base_url}/models",
+                headers=self.headers,
+                params={"limit": 1}
+            )
+            return response.status_code == 200
         except Exception:
             return False
     
     def get_account_info(self) -> Dict[str, Any]:
         """
-        Get account information
+        Get account information for the authenticated user.
         
         Returns:
-            dict: Account information
+            dict: Account information or error details.
         """
         try:
-            # Make a simple API call to get account info
             response = requests.get(
-                f"{self.config.base_url}/account",
-                headers={"Authorization": f"Token {self.config.api_token}"},
-                timeout=self.config.timeout
+                f"{self.base_url}/account",
+                headers=self.headers
             )
-            response.raise_for_status()
-            return response.json()
+            
+            if response.status_code == 200:
+                return {
+                    "success": True,
+                    "data": response.json()
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status_code}: {response.text}"
+                }
         except Exception as e:
-            raise ReplicateAuthError(f"Failed to get account info: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
     
     def test_connection(self) -> Dict[str, Any]:
         """
-        Test the connection to Replicate API
+        Test the connection to Replicate API.
         
         Returns:
-            dict: Connection test results
+            dict: Connection test results.
         """
         try:
             # Test basic connectivity
-            models = list(self.client.models.list())
-            model_count = len(models)
+            response = requests.get(
+                f"{self.base_url}/models",
+                headers=self.headers,
+                params={"limit": 1},
+                timeout=10
+            )
             
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "success": True,
+                    "message": "Successfully connected to Replicate API",
+                    "models_available": len(data.get("results", [])),
+                    "rate_limit_remaining": response.headers.get("X-RateLimit-Remaining"),
+                    "rate_limit_reset": response.headers.get("X-RateLimit-Reset")
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status_code}: {response.text}"
+                }
+        except requests.exceptions.Timeout:
             return {
-                "status": "success",
-                "message": "Connection successful",
-                "model_count": model_count,
-                "api_version": "v1"
+                "success": False,
+                "error": "Connection timeout - Replicate API is not responding"
+            }
+        except requests.exceptions.ConnectionError:
+            return {
+                "success": False,
+                "error": "Connection error - Unable to reach Replicate API"
             }
         except Exception as e:
             return {
-                "status": "error",
-                "message": f"Connection failed: {str(e)}",
-                "model_count": 0,
-                "api_version": "unknown"
+                "success": False,
+                "error": f"Unexpected error: {str(e)}"
+            }
+    
+    def get_model_info(self, model_owner: str, model_name: str) -> Dict[str, Any]:
+        """
+        Get information about a specific model.
+        
+        Args:
+            model_owner (str): Owner of the model
+            model_name (str): Name of the model
+            
+        Returns:
+            dict: Model information or error details.
+        """
+        try:
+            response = requests.get(
+                f"{self.base_url}/models/{model_owner}/{model_name}",
+                headers=self.headers
+            )
+            
+            if response.status_code == 200:
+                return {
+                    "success": True,
+                    "data": response.json()
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status_code}: {response.text}"
+                }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    def create_prediction(self, model_version: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a prediction using a model.
+        
+        Args:
+            model_version (str): Model version ID
+            input_data (dict): Input parameters for the model
+            
+        Returns:
+            dict: Prediction creation result.
+        """
+        try:
+            payload = {
+                "version": model_version,
+                "input": input_data
+            }
+            
+            response = requests.post(
+                f"{self.base_url}/predictions",
+                headers=self.headers,
+                json=payload
+            )
+            
+            if response.status_code == 201:
+                return {
+                    "success": True,
+                    "data": response.json()
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status_code}: {response.text}"
+                }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    def get_prediction(self, prediction_id: str) -> Dict[str, Any]:
+        """
+        Get the status and results of a prediction.
+        
+        Args:
+            prediction_id (str): ID of the prediction
+            
+        Returns:
+            dict: Prediction details.
+        """
+        try:
+            response = requests.get(
+                f"{self.base_url}/predictions/{prediction_id}",
+                headers=self.headers
+            )
+            
+            if response.status_code == 200:
+                return {
+                    "success": True,
+                    "data": response.json()
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status_code}: {response.text}"
+                }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    def list_popular_models(self, limit: int = 10) -> Dict[str, Any]:
+        """
+        List popular models on Replicate.
+        
+        Args:
+            limit (int): Number of models to return
+            
+        Returns:
+            dict: List of popular models.
+        """
+        try:
+            response = requests.get(
+                f"{self.base_url}/models",
+                headers=self.headers,
+                params={"limit": limit}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("results", [])
+                
+                # Sort by run count (popularity)
+                popular_models = sorted(
+                    models,
+                    key=lambda x: x.get("run_count", 0),
+                    reverse=True
+                )
+                
+                return {
+                    "success": True,
+                    "data": popular_models[:limit],
+                    "total_available": len(models)
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status_code}: {response.text}"
+                }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
             }
 
 
-def create_replicate_client(api_token: str, **kwargs) -> ReplicateClient:
+def create_replicate_client(api_token: Optional[str] = None) -> ReplicateAuthClient:
     """
-    Create a Replicate client with the provided token
+    Factory function to create a Replicate authentication client.
     
     Args:
-        api_token (str): Replicate API token
-        **kwargs: Additional configuration options
-    
+        api_token (str, optional): Replicate API token
+        
     Returns:
-        ReplicateClient: Configured client instance
+        ReplicateAuthClient: Configured client instance
     """
-    config = ReplicateConfig(api_token=api_token, **kwargs)
-    return ReplicateClient(config)
+    return ReplicateAuthClient(api_token)
 
 
-def get_token_from_env() -> Optional[str]:
+def validate_replicate_token(api_token: str) -> bool:
     """
-    Get Replicate API token from environment variables
-    
-    Returns:
-        str: API token if found, None otherwise
-    """
-    return os.getenv("REPLICATE_API_TOKEN")
-
-
-def validate_replicate_token(token: str) -> bool:
-    """
-    Validate a Replicate API token
+    Validate a Replicate API token.
     
     Args:
-        token (str): API token to validate
-    
+        api_token (str): The API token to validate
+        
     Returns:
         bool: True if valid, False otherwise
     """
     try:
-        client = create_replicate_client(token)
+        client = ReplicateAuthClient(api_token)
         return client.validate_token()
     except Exception:
         return False
 
 
-class ReplicateTokenManager:
-    """
-    Token manager for handling multiple Replicate tokens
-    """
-    
-    def __init__(self):
-        self.tokens = {}
-        self.clients = {}
-    
-    def add_token(self, name: str, token: str) -> bool:
-        """
-        Add a token to the manager
-        
-        Args:
-            name (str): Token identifier
-            token (str): API token
-        
-        Returns:
-            bool: True if token is valid and added, False otherwise
-        """
-        if validate_replicate_token(token):
-            self.tokens[name] = token
-            self.clients[name] = create_replicate_client(token)
-            return True
-        return False
-    
-    def get_client(self, name: str) -> Optional[ReplicateClient]:
-        """
-        Get a client by name
-        
-        Args:
-            name (str): Token identifier
-        
-        Returns:
-            ReplicateClient: Client instance if found, None otherwise
-        """
-        return self.clients.get(name)
-    
-    def remove_token(self, name: str) -> bool:
-        """
-        Remove a token from the manager
-        
-        Args:
-            name (str): Token identifier
-        
-        Returns:
-            bool: True if removed, False if not found
-        """
-        if name in self.tokens:
-            del self.tokens[name]
-            del self.clients[name]
-            return True
-        return False
-    
-    def list_tokens(self) -> list:
-        """
-        List all token names
-        
-        Returns:
-            list: List of token names
-        """
-        return list(self.tokens.keys())
-    
-    def test_all_tokens(self) -> Dict[str, Dict[str, Any]]:
-        """
-        Test all managed tokens
-        
-        Returns:
-            dict: Test results for all tokens
-        """
-        results = {}
-        for name, client in self.clients.items():
-            results[name] = client.test_connection()
-        return results
-
-
-# Authentication decorators
-def require_replicate_auth(func):
-    """
-    Decorator to require Replicate authentication
-    """
-    def wrapper(*args, **kwargs):
-        token = kwargs.get('token') or get_token_from_env()
-        if not token:
-            raise ReplicateAuthError("No Replicate API token provided")
-        
-        if not validate_replicate_token(token):
-            raise ReplicateAuthError("Invalid Replicate API token")
-        
-        return func(*args, **kwargs)
-    return wrapper
-
-
 # Example usage and testing
 if __name__ == "__main__":
-    # Test token validation
-    token = get_token_from_env()
-    if token:
-        print("Testing Replicate authentication...")
-        
-        # Create client
-        client = create_replicate_client(token)
+    # Example usage
+    try:
+        # Initialize client
+        client = create_replicate_client()
         
         # Test connection
+        print("Testing connection...")
         result = client.test_connection()
         print(f"Connection test: {result}")
         
         # Get account info
-        try:
-            account_info = client.get_account_info()
-            print(f"Account info: {account_info}")
-        except Exception as e:
-            print(f"Could not get account info: {e}")
+        print("\nGetting account info...")
+        account_info = client.get_account_info()
+        print(f"Account info: {account_info}")
         
-        # Test token manager
-        manager = ReplicateTokenManager()
-        if manager.add_token("default", token):
-            print("Token added to manager successfully")
-            
-            # Test all tokens
-            test_results = manager.test_all_tokens()
-            print(f"Token test results: {test_results}")
-        else:
-            print("Failed to add token to manager")
-    else:
-        print("No REPLICATE_API_TOKEN environment variable found")
-        print("Please set your Replicate API token in the environment:")
-        print("export REPLICATE_API_TOKEN=your_token_here")
+        # List popular models
+        print("\nListing popular models...")
+        popular_models = client.list_popular_models(5)
+        if popular_models["success"]:
+            print(f"Found {len(popular_models['data'])} popular models:")
+            for model in popular_models["data"]:
+                print(f"  - {model['owner']}/{model['name']} (runs: {model.get('run_count', 0)})")
+        
+    except Exception as e:
+        print(f"Error: {e}")
+        print("Make sure to set REPLICATE_API_TOKEN environment variable or pass api_token parameter")
