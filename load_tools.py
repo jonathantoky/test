@@ -1,231 +1,278 @@
 """
-Load Tools - Replicate Agent Tools Integration
+Load Tools - Replicate Integration
 
-This file demonstrates how to import and use the Replicate agent tools
-in your application.
+This module provides utilities for loading and integrating Replicate tools
+into the agent tools ecosystem.
 """
 
-from agent_tools.replicate import create_replicate_tools
-from agent_tools.replicate.models import (
-    list_models_replicate,
-    get_model_replicate,
-    create_model_replicate,
-    get_model_versions_replicate,
-    get_model_version_replicate
-)
-from agent_tools.replicate.predictions import (
-    create_prediction_replicate,
-    get_prediction_replicate,
-    list_predictions_replicate,
-    cancel_prediction_replicate,
-    run_prediction_replicate
-)
-from agent_tools.replicate.code_generation import (
-    generate_code_replicate,
-    optimize_code_replicate,
-    debug_code_replicate,
-    generate_dockerfile_replicate,
-    generate_requirements_replicate
-)
+import os
+import sys
+from typing import List, Dict, Any, Optional
+import importlib.util
+
+# Add the current directory to Python path for imports
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
+# Import Replicate tools
+try:
+    from agent_tools.replicate import create_replicate_tools
+    from agent_tools.replicate.models import (
+        list_replicate_models, get_replicate_model, create_replicate_model,
+        update_replicate_model, delete_replicate_model
+    )
+    from agent_tools.replicate.predictions import (
+        create_replicate_prediction, get_replicate_prediction, cancel_replicate_prediction,
+        list_replicate_predictions, stream_replicate_prediction
+    )
+    from agent_tools.replicate.code_generation import (
+        generate_code_replicate, optimize_code_replicate, debug_code_replicate,
+        explain_code_replicate, convert_code_replicate
+    )
+    from client.replicate_client import ReplicateClient, validate_api_token
+    
+    REPLICATE_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Replicate tools not available: {e}")
+    REPLICATE_AVAILABLE = False
 
 
-def load_replicate_tools(token: str, name: str = "replicate", description: str = None):
+def load_replicate_tools(config: Dict[str, Any]) -> List[Any]:
     """
-    Load all Replicate tools with the provided token.
+    Load Replicate tools with configuration
     
     Args:
-        token (str): Replicate API token
-        name (str): Base name for the tools (default: "replicate")
-        description (str): Optional description for the tools
+        config: Configuration dictionary containing:
+            - api_token: Replicate API token
+            - name: Base name for tools (optional)
+            - description: Description for tools (optional)
+            - categories: List of tool categories to load (optional)
     
     Returns:
-        list: List of all Replicate tools
+        List of loaded Replicate tools
     """
-    return create_replicate_tools(name, token, description)
-
-
-def load_replicate_model_tools(token: str, name: str = "replicate_models"):
-    """
-    Load only the model management tools.
+    if not REPLICATE_AVAILABLE:
+        raise ImportError("Replicate tools are not available. Please install required dependencies.")
     
-    Args:
-        token (str): Replicate API token
-        name (str): Base name for the tools
+    api_token = config.get('api_token')
+    if not api_token:
+        raise ValueError("Replicate API token is required in config")
     
-    Returns:
-        list: List of model management tools
-    """
+    # Validate API token
+    if not validate_api_token(api_token):
+        raise ValueError("Invalid Replicate API token")
+    
+    name = config.get('name', 'replicate')
+    description = config.get('description', 'Replicate AI tools')
+    categories = config.get('categories', ['models', 'predictions', 'code_generation'])
+    
     tools = []
     
-    # Model management tools
-    tools.append(list_models_replicate(f"{name}_list", "List models", token))
-    tools.append(get_model_replicate(f"{name}_get", "Get model details", token))
-    tools.append(create_model_replicate(f"{name}_create", "Create model", token))
-    tools.append(get_model_versions_replicate(f"{name}_versions", "Get model versions", token))
-    tools.append(get_model_version_replicate(f"{name}_version", "Get model version", token))
+    # Load model management tools
+    if 'models' in categories:
+        model_tools = [
+            list_replicate_models(f"{name}_list_models", description, api_token),
+            get_replicate_model(f"{name}_get_model", description, api_token),
+            create_replicate_model(f"{name}_create_model", description, api_token),
+            update_replicate_model(f"{name}_update_model", description, api_token),
+            delete_replicate_model(f"{name}_delete_model", description, api_token)
+        ]
+        tools.extend(model_tools)
+    
+    # Load prediction tools
+    if 'predictions' in categories:
+        prediction_tools = [
+            create_replicate_prediction(f"{name}_create_prediction", description, api_token),
+            get_replicate_prediction(f"{name}_get_prediction", description, api_token),
+            cancel_replicate_prediction(f"{name}_cancel_prediction", description, api_token),
+            list_replicate_predictions(f"{name}_list_predictions", description, api_token),
+            stream_replicate_prediction(f"{name}_stream_prediction", description, api_token)
+        ]
+        tools.extend(prediction_tools)
+    
+    # Load code generation tools
+    if 'code_generation' in categories:
+        code_tools = [
+            generate_code_replicate(f"{name}_generate_code", description, api_token),
+            optimize_code_replicate(f"{name}_optimize_code", description, api_token),
+            debug_code_replicate(f"{name}_debug_code", description, api_token),
+            explain_code_replicate(f"{name}_explain_code", description, api_token),
+            convert_code_replicate(f"{name}_convert_code", description, api_token)
+        ]
+        tools.extend(code_tools)
     
     return tools
 
 
-def load_replicate_prediction_tools(token: str, name: str = "replicate_predictions"):
+def load_all_replicate_tools(api_token: str, name: str = 'replicate', description: Optional[str] = None) -> List[Any]:
     """
-    Load only the prediction management tools.
+    Load all Replicate tools (convenience function)
     
     Args:
-        token (str): Replicate API token
-        name (str): Base name for the tools
+        api_token: Replicate API token
+        name: Base name for tools
+        description: Description for tools
     
     Returns:
-        list: List of prediction management tools
+        List of all Replicate tools
     """
-    tools = []
+    if not REPLICATE_AVAILABLE:
+        raise ImportError("Replicate tools are not available. Please install required dependencies.")
     
-    # Prediction management tools
-    tools.append(create_prediction_replicate(f"{name}_create", "Create prediction", token))
-    tools.append(get_prediction_replicate(f"{name}_get", "Get prediction", token))
-    tools.append(list_predictions_replicate(f"{name}_list", "List predictions", token))
-    tools.append(cancel_prediction_replicate(f"{name}_cancel", "Cancel prediction", token))
-    tools.append(run_prediction_replicate(f"{name}_run", "Run prediction", token))
-    
-    return tools
+    return create_replicate_tools(name, api_token, description)
 
 
-def load_replicate_code_tools(token: str, name: str = "replicate_code"):
+def get_replicate_tool_info() -> Dict[str, Any]:
     """
-    Load only the code generation tools.
+    Get information about available Replicate tools
+    
+    Returns:
+        Dictionary containing tool information
+    """
+    if not REPLICATE_AVAILABLE:
+        return {
+            "available": False,
+            "error": "Replicate tools not available"
+        }
+    
+    return {
+        "available": True,
+        "categories": {
+            "models": {
+                "description": "Model management tools",
+                "tools": [
+                    "list_models", "get_model", "create_model", 
+                    "update_model", "delete_model"
+                ]
+            },
+            "predictions": {
+                "description": "Prediction execution tools",
+                "tools": [
+                    "create_prediction", "get_prediction", "cancel_prediction",
+                    "list_predictions", "stream_prediction"
+                ]
+            },
+            "code_generation": {
+                "description": "AI code generation tools",
+                "tools": [
+                    "generate_code", "optimize_code", "debug_code",
+                    "explain_code", "convert_code"
+                ]
+            }
+        },
+        "total_tools": 15,
+        "version": "1.0.0"
+    }
+
+
+def validate_replicate_config(config: Dict[str, Any]) -> bool:
+    """
+    Validate Replicate configuration
     
     Args:
-        token (str): Replicate API token
-        name (str): Base name for the tools
+        config: Configuration dictionary
     
     Returns:
-        list: List of code generation tools
+        True if configuration is valid
     """
-    tools = []
+    if not REPLICATE_AVAILABLE:
+        return False
     
-    # Code generation tools
-    tools.append(generate_code_replicate(f"{name}_generate", "Generate code", token))
-    tools.append(optimize_code_replicate(f"{name}_optimize", "Optimize code", token))
-    tools.append(debug_code_replicate(f"{name}_debug", "Debug code", token))
-    tools.append(generate_dockerfile_replicate(f"{name}_dockerfile", "Generate Dockerfile", token))
-    tools.append(generate_requirements_replicate(f"{name}_requirements", "Generate requirements", token))
+    api_token = config.get('api_token')
+    if not api_token:
+        return False
     
-    return tools
+    return validate_api_token(api_token)
 
 
-# Example usage
-if __name__ == "__main__":
-    # Replace with your actual Replicate API token
-    REPLICATE_TOKEN = "your_replicate_api_token_here"
-    
-    # Load all tools
-    print("Loading all Replicate tools...")
-    all_tools = load_replicate_tools(REPLICATE_TOKEN)
-    print(f"Loaded {len(all_tools)} tools")
-    
-    # Load specific tool categories
-    print("\nLoading model management tools...")
-    model_tools = load_replicate_model_tools(REPLICATE_TOKEN)
-    print(f"Loaded {len(model_tools)} model tools")
-    
-    print("\nLoading prediction tools...")
-    prediction_tools = load_replicate_prediction_tools(REPLICATE_TOKEN)
-    print(f"Loaded {len(prediction_tools)} prediction tools")
-    
-    print("\nLoading code generation tools...")
-    code_tools = load_replicate_code_tools(REPLICATE_TOKEN)
-    print(f"Loaded {len(code_tools)} code generation tools")
-    
-    # Display tool names
-    print("\nAll available tools:")
-    for i, tool in enumerate(all_tools, 1):
-        print(f"{i}. {tool.name} - {tool.description}")
-
-
-# Integration with LangChain agents
-def create_replicate_agent(token: str, model_name: str = "gpt-3.5-turbo"):
+def create_replicate_client(api_token: str) -> Optional[ReplicateClient]:
     """
-    Create a LangChain agent with Replicate tools.
+    Create Replicate client instance
     
     Args:
-        token (str): Replicate API token
-        model_name (str): Language model to use for the agent
+        api_token: Replicate API token
     
     Returns:
-        Agent with Replicate tools
+        ReplicateClient instance or None if not available
     """
+    if not REPLICATE_AVAILABLE:
+        return None
+    
     try:
-        from langchain.agents import initialize_agent, AgentType
-        from langchain.llms import OpenAI
-        
-        # Load Replicate tools
-        tools = load_replicate_tools(token)
-        
-        # Initialize LLM
-        llm = OpenAI(temperature=0)
-        
-        # Create agent
-        agent = initialize_agent(
-            tools=tools,
-            llm=llm,
-            agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-            verbose=True
-        )
-        
-        return agent
-        
-    except ImportError:
-        print("LangChain not installed. Install with: pip install langchain")
+        return ReplicateClient(api_token)
+    except Exception:
         return None
 
 
-# Configuration examples
-REPLICATE_TOOL_CONFIGS = {
-    "basic": {
-        "name": "replicate_basic",
-        "description": "Basic Replicate tools for model interaction"
-    },
-    "advanced": {
-        "name": "replicate_advanced",
-        "description": "Advanced Replicate tools with code generation"
-    },
-    "code_focus": {
-        "name": "replicate_code",
-        "description": "Code-focused Replicate tools for development"
-    }
+# Tool loading registry
+TOOL_LOADERS = {
+    'replicate': load_replicate_tools,
+    'replicate_all': load_all_replicate_tools,
 }
 
 
-def load_replicate_tools_by_config(token: str, config_name: str = "basic"):
+def load_tools_by_type(tool_type: str, config: Dict[str, Any]) -> List[Any]:
     """
-    Load Replicate tools based on predefined configurations.
+    Load tools by type
     
     Args:
-        token (str): Replicate API token
-        config_name (str): Configuration name (basic, advanced, code_focus)
+        tool_type: Type of tools to load
+        config: Configuration for tools
     
     Returns:
-        list: List of configured tools
+        List of loaded tools
     """
-    if config_name not in REPLICATE_TOOL_CONFIGS:
-        raise ValueError(f"Unknown configuration: {config_name}")
+    if tool_type not in TOOL_LOADERS:
+        raise ValueError(f"Unknown tool type: {tool_type}")
     
-    config = REPLICATE_TOOL_CONFIGS[config_name]
+    loader = TOOL_LOADERS[tool_type]
+    return loader(config)
+
+
+def get_available_tool_types() -> List[str]:
+    """
+    Get list of available tool types
     
-    if config_name == "basic":
-        # Basic tools: models and predictions
-        tools = []
-        tools.extend(load_replicate_model_tools(token, f"{config['name']}_models"))
-        tools.extend(load_replicate_prediction_tools(token, f"{config['name']}_predictions"))
-        return tools
+    Returns:
+        List of available tool types
+    """
+    return list(TOOL_LOADERS.keys())
+
+
+# Example usage and testing
+if __name__ == "__main__":
+    print("Replicate Tools Loader")
+    print("=" * 50)
     
-    elif config_name == "advanced":
-        # All tools
-        return load_replicate_tools(token, config["name"], config["description"])
+    # Check availability
+    print(f"Replicate tools available: {REPLICATE_AVAILABLE}")
     
-    elif config_name == "code_focus":
-        # Code generation tools only
-        return load_replicate_code_tools(token, config["name"])
+    if REPLICATE_AVAILABLE:
+        # Get tool info
+        info = get_replicate_tool_info()
+        print(f"Total tools: {info['total_tools']}")
+        print(f"Categories: {list(info['categories'].keys())}")
+        
+        # Test with dummy config (will fail validation)
+        test_config = {
+            'api_token': 'test_token',
+            'name': 'test_replicate',
+            'description': 'Test Replicate tools'
+        }
+        
+        print(f"Config valid: {validate_replicate_config(test_config)}")
+        
+        # Show available tool types
+        print(f"Available tool types: {get_available_tool_types()}")
     
-    else:
-        return load_replicate_tools(token, config["name"], config["description"])
+    print("\nTo use these tools, provide a valid Replicate API token in the configuration.")
+    print("Example:")
+    print("""
+    config = {
+        'api_token': 'r8_your_token_here',
+        'name': 'my_replicate',
+        'description': 'My Replicate tools'
+    }
+    tools = load_replicate_tools(config)
+    """)
